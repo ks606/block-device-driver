@@ -1,5 +1,0 @@
-#!/bin/sh
-
-module="sbull"
-
-/sbin/insmod -f ./$module.ko 
