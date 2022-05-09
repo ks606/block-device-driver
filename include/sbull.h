@@ -1,3 +1,6 @@
+#ifndef _SBULL_H
+#define _SBULL_H
+
 extern struct bus_type sbull_bus_type;
 
 struct sbull_bus_driver {
@@ -37,3 +40,5 @@ struct sbull_dev {
 	char *name;
 	struct sbull_bus_device sdev;
 };
+
+#endif /* _SBULL_H* /
