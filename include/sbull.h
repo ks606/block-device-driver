@@ -41,4 +41,4 @@ struct sbull_dev {
 	struct sbull_bus_device sdev;
 };
 
-#endif /* _SBULL_H* /
+#endif /* _SBULL_H */

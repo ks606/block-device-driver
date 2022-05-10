@@ -64,6 +64,13 @@ enum {
 	RM_NOQUEUE = 2,	
 };
 
+/* variation of user commands */
+typedef enum {
+	NO_UCMD,
+	UCMD1,
+	UCMD2,
+} user_command;
+
 static int request_mode = RM_FULL;
 
 static struct sbull_dev *Devices = NULL;
@@ -125,9 +132,10 @@ void unregister_sbull_device(struct sbull_bus_device *sbull)
  */
 static ssize_t user_cmd_store(struct device_driver *driver, const char *buf, size_t count)
 {
-	int i = 0;
 	int cmd_len;
+	int i;
 	long result = 0;
+	user_command cmd_flag = NO_UCMD;
 
 	sprintf(user_cmd_array, "%s\n", buf);
 	//return copy_from_user(user_cmd_array, buf, );
@@ -135,23 +143,29 @@ static ssize_t user_cmd_store(struct device_driver *driver, const char *buf, siz
 		printk(KERN_INFO ">>> user command received\n");
 		cmd_len = 12;
 		if (!strncmp(buf, "set_devsize=", cmd_len)) {
+			cmd_flag = UCMD1;
 			printk(KERN_INFO ">>> user command has been identified -- it's <set_devsize>!\n");
 			for (i = 0; i < 6; i++) {
 				user_cmd_atoibuf[i] = buf[cmd_len + i];
 			}
+
 			kstrtol(user_cmd_atoibuf, 0, &result);
 			if ((result > 0) && (result < 500000)) {
 				nr_sectors = result;
 				printk(KERN_INFO ">>> Block device size set in %ld sectors\n", result);
 			}
-		}
+		} 
+
 		cmd_len = 10;
 		if (!strncmp(buf, "add_device", cmd_len)) {
+			cmd_flag = UCMD2;
 			printk(KERN_INFO ">>> user command has been identified -- it's <add_device>!\n");
 			wait_queue_flag = WAIT_EXIT_USERCMD;
 			wake_up_interruptible(&wait_queue_usr);
 		}
-		printk(KERN_INFO ">>> user command has been not identified -- please try again!\n");
+
+		if (cmd_flag == NO_UCMD)
+			printk(KERN_INFO ">>> user command has been not identified -- please try again!\n");
 	}
 
 	return strlen(buf);
@@ -196,10 +210,12 @@ static struct sbull_bus_driver sbull_driver = {
 		.name = "sbulld"
 	}
 };
+
 /* Block device section */
 static inline struct request_queue *blk_generic_alloc_queue(make_request_fn make_request, int node_id)
 {
 	struct request_queue *q = blk_alloc_queue(GFP_KERNEL);
+	
 	if (q != NULL)
 		blk_queue_make_request(q, make_request);
 
@@ -216,6 +232,7 @@ static void sbull_transfer(struct sbull_dev *dev, unsigned long sector,
 		printk (KERN_INFO "Beyond-end write (%ld %ld)\n", offset, nbytes);
 		return;
 	}
+
 	if (write)
 		memcpy(dev->data + offset, buffer, nbytes);
 	else
@@ -236,12 +253,12 @@ static blk_status_t sbull_request(struct blk_mq_hw_ctx *hctx, const struct blk_m
 	blk_status_t ret;
 
 	blk_mq_start_request (req);
-
 	if (blk_rq_is_passthrough(req)) {
 		printk (KERN_INFO "Skip non-fs request\n");
 		ret = BLK_STS_IOERR;  //-EIO
 			goto done;
 	}
+
 	rq_for_each_segment(bvec, req, iter)
 	{
 		size_t num_sector = blk_rq_cur_sectors(req);
@@ -249,12 +266,14 @@ static blk_status_t sbull_request(struct blk_mq_hw_ctx *hctx, const struct blk_m
 		sbull_transfer(dev, pos_sector, num_sector, buffer, rq_data_dir(req) == WRITE);
 		pos_sector += num_sector;
 	}
+
 	ret = BLK_STS_OK;
 done:
 	blk_mq_end_request (req, ret);
 
 	return ret;
 }
+
 /*
  *  transfer single bio 
  */ 
@@ -305,6 +324,7 @@ static blk_status_t sbull_full_request(struct blk_mq_hw_ctx *hctx, const struct 
 		ret = BLK_STS_IOERR;
 		goto done;
 	}
+
 	sectors_xferred = sbull_xfer_request(dev, req);
 	ret = BLK_STS_OK;
 done:
@@ -338,6 +358,7 @@ static int sbull_open(struct block_device *bdev, fmode_t mode)
 	spin_lock(&dev->lock);
 	if (!dev->users)
 		check_disk_change(bdev);
+
 	dev->users++;
 	spin_unlock(&dev->lock);
 
@@ -350,11 +371,11 @@ static void sbull_release(struct gendisk *gd, fmode_t mode)
 
 	spin_lock(&dev->lock);
 	dev->users--;
-
 	if (!dev->users) {
 		dev->timer.expires = jiffies + INVALIDATE_DELAY;
 		add_timer(&dev->timer);
 	}
+
 	spin_unlock(&dev->lock);
 	printk(KERN_INFO "disk %s has been released\n", dev->gd->disk_name);
 }
@@ -381,6 +402,7 @@ int sbull_revalidate_disk(struct gendisk *gd)
 		dev->media_change = 0;
 		memset(dev->data, 0, dev->size);
 	}
+
 	printk(KERN_INFO "disk %s has been revalidated\n", dev->gd->disk_name);
 
 	return 0;
@@ -395,6 +417,7 @@ void sbull_invalidate(struct timer_list *ldev)
 		printk(KERN_INFO "sbull:timer sanity check failed\n");
 	else
 		dev->media_change = 1;
+
 	spin_unlock(&dev->lock);
 }
 
@@ -443,7 +466,6 @@ static void setup_device(struct sbull_dev *dev, int which)
 {
 	dev->size = nr_sectors * hardsect_size;
 	dev->data = vzalloc(dev->size);
-
 	if (dev->data == NULL) {
 		printk(KERN_INFO "dev->data malloc failure\n");
 		return;
@@ -482,24 +504,21 @@ static void setup_device(struct sbull_dev *dev, int which)
 	 */
 	blk_queue_logical_block_size(dev->queue, hardsect_size);
 	printk(KERN_INFO "disk configuring begins\n");
-
 	dev->queue->queuedata = dev;
 	dev->gd = alloc_disk(SBULL_MINORS);
-
 	if (dev->gd == NULL) {
 		printk(KERN_INFO "alloc_disk failure\n");
 		goto out_vfree;
 	}
+
 	dev->gd->major = sbull_major;
 	dev->gd->first_minor = which * SBULL_MINORS;
 	dev->gd->fops = &sbull_ops;
 	dev->gd->queue = dev->queue;
 	dev->gd->private_data = dev;
-
 	snprintf(dev->gd->disk_name, 32, "sbull%c", which + 'a');
 	set_capacity(dev->gd, nr_sectors);
 	add_disk(dev->gd);
-
 	printk(KERN_INFO "disk %s has been added\n", dev->gd->disk_name);
 	printk(KERN_INFO "disk size         -- %d bytes\n", dev->size);
 	printk(KERN_INFO "number of sectors -- %d \n", nr_sectors);
@@ -523,6 +542,7 @@ static void register_sbulld_dev(struct sbull_dev *dev, int index)
 		printk(KERN_INFO "device not registered, errno = %d\n", ret);
 		return;
 	}
+
 	printk(KERN_INFO "device registered ???\n");
 	return;
 }
@@ -532,6 +552,8 @@ static void register_sbulld_dev(struct sbull_dev *dev, int index)
  */
 static int wait_function(void *unused)
 {
+	int i;
+
 	while(1) {
 		printk(KERN_INFO "Waiting for user command ...\n");
 		wait_event_interruptible(wait_queue_usr, wait_queue_flag != 0);
@@ -539,16 +561,16 @@ static int wait_function(void *unused)
 			printk(KERN_INFO "wait_queue interrupted by EXIT function\n");
 			return 0;
 		}
+
 		if (wait_queue_flag == WAIT_EXIT_USERCMD) {
 			/*
 			 * device creation by user command
  			 */
-			int i;
-
 			Devices = kzalloc(nr_devices * sizeof(struct sbull_dev), GFP_KERNEL);
 			if (Devices == NULL) {
 				printk(KERN_INFO "device doesnt exist - goto UNREGISTER\n");
 			}
+
 			for (i = 0; i < nr_devices; i++) {
 				/*
 				 * device registration, not working :(
@@ -572,13 +594,14 @@ static int wait_function(void *unused)
  */ 
 static int sbull_init(void)
 {	
-	int i;
 	int ret;
+	int i;
 
 	printk(KERN_INFO ">>> Sbull module has been loaded\n");
 	ret = bus_register(&sbull_bus_type);
 	if (ret)
 		return ret;
+
 	ret = device_register(&sbull_bus);
 	if (ret)
 		printk(KERN_INFO "unable to register sbull-0\n");	
@@ -604,6 +627,7 @@ static int sbull_init(void)
 			printk(KERN_INFO "device doesnt exist - goto UNREGISTER\n");
 			goto out_unregister;
 		}
+
 		for (i = 0; i < nr_devices; i++) {
 			/*
 			 * device registration, not working :(
@@ -626,12 +650,11 @@ static int sbull_init(void)
 		init_waitqueue_head(&wait_queue_usr);
 
 		wait_thread = kthread_create(wait_function, NULL, "WaitThread");
-		if (wait_thread) {
-			printk(KERN_INFO "thread created\n");
+		if (wait_thread)
 			wake_up_process(wait_thread);
-		} else {
+		else 
 			printk(KERN_INFO "thread NOT created\n");
-		}
+		
 		return 0;
 	}
 
