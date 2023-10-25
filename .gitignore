@@ -1,8 +1,8 @@
-*.o
-*.mod
-*.ko
-*.order
-*.symvers
-*.cmd
-*.d
-*.txt
+*
+
+!.gitignore
+!*.c
+!Makefile
+!*.sh
+
+!include
