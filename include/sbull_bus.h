@@ -1,3 +1,6 @@
+#ifndef _SBULL_BUS_H
+#define _SBULL_BUS_H
+
 extern struct bus_type sbull_bus_type;
 
 struct sbull_bus_driver {
@@ -24,3 +27,4 @@ extern void unregister_sbull_driver(struct sbull_bus_driver *);
 extern int register_sbull_device(struct sbull_bus_device *);
 extern void unregister_sbull_device(struct sbull_bus_device *);
 
+#endif /* _SBULL_BUS_H */
